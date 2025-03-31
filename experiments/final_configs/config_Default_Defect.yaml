@@ -1,0 +1,148 @@
+repeats: 10
+seed: 42
+checkpoints: [12, 20, 50]
+datasets:
+  - path: data/defect
+    task: defect prediction
+    target_column_index: -1
+    timed: True
+    holdout:
+      train:
+        camel: [1.0, 1.2, 1.4]
+        ivy: [1.1, 1.4]
+        jedit: [3.2, 4.0, 4.1, 4.2]
+        log4j: [1.0, 1.1]
+        lucene: [2.0, 2.2]
+        poi: [1.5, 2.0, 2.5]
+        synapse: [1.0, 1.1]
+        velocity: [1.4, 1.5]
+        xalan: [2.4, 2.5, 2.6]
+        xerces: [1.2, 1.3]
+      test:
+        camel: [1.6]
+        ivy: [2.0]
+        jedit: [4.3]
+        log4j: [1.2]
+        lucene: [2.4]
+        poi: [3.0]
+        synapse: [1.2]
+        velocity: [1.6]
+        xalan: [2.7]
+        xerces: [1.4]
+
+models:
+  - type: DecisionTree
+    disable: True
+    needed: 200000
+    parameters:
+      model_min_samples_leaf: [1, 20]
+      model_min_samples_split: [2, 20]
+      model_criterion: ["gini", "entropy", "log_loss"]
+      model_splitter: ["best", "random"]
+      model_max_depth: [1, 10]
+      model_max_features: [0.1, 1.0]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+
+  - type: RandomForest
+    needed: 200000
+    parameters:
+      model_n_estimators: [50, 150]
+      model_criterion: ["gini", "entropy", "log_loss"]
+      model_min_samples_leaf: [1, 20]
+      model_min_samples_split: [2, 20]
+      model_max_leaf_nodes: [2, 50]
+      model_max_features: [0.1,1.00]
+      model_max_depth: [1, 10]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+
+  - type: LogisticRegression
+    needed: 200000
+    parameters:
+      model_C: [0.1, 500.00]
+      model_solver: ['lbfgs', 'liblinear', 'newton-cg', 'newton-cholesky', 'sag', 'saga']
+      model_penalty: ['l1', 'l2']
+      model_tol: [0.0, 0.1]
+      model_max_iter: [50, 200]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+    conditions:
+      - parameter: model_solver
+        rules:
+          - if: model_penalty == 'l1'
+            valid_values: ['liblinear', 'saga']
+          - if: model_penalty == 'l2'
+            valid_values: ['lbfgs', 'liblinear', 'newton-cg', 'newton-cholesky', 'sag', 'saga']
+    #verbose not used as it has no impact on HPO
+  - type: KNN
+    needed: 200000
+    parameters:
+      model_leaf_size: [10, 100]
+      model_n_neighbors: [2, 30]
+      model_weights: ['uniform', 'distance']
+      model_metric: ['minkowski', 'manhattan', 'euclidean', 'cosine']
+      model_p: [3, 30]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+
+  - type: SVM
+    needed: 200000
+    disable: True
+    parameters:
+      model_kernel: ['rbf', 'linear', 'poly', 'sigmoid']
+      model_degree: [2,10] #increased
+      model_coef0: [0.0,0.1]
+      model_gamma: [0.0, 1.0]
+      model_tol: [0.0, 0.1]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+      
+  - type: MultinomialNB
+    disable: True
+    needed: 50000
+    parameters:
+      model_alpha: [0.0, 1.0]
+      smote_k_neighbors: [1, 20]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+      standard_enable: ["0"]
+      robust_enable: ["0"]
+
+optimizer:
+  - name: DEFAULT  # or BOHB, DEHB
+
+output_folder: SMAC3_results_TPE
+
+runs_output_folder: results_Default_final
+
+logging_folder: logging_Default_final

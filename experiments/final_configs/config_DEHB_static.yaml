@@ -1,0 +1,17 @@
+repeats: 5
+seed: 42
+checkpoints: [12, 18, 24, 50, 100, 150, 200]
+datasets:
+  - path: data/moot
+    task: moot
+
+optimizer:
+  - name: DEHB
+    n_trials: 200
+    output_directory: 'tmp_DEHB'
+
+output_folder: 'tmp_DEHB'
+
+runs_output_folder: results_DEHB
+
+logging_folder: logging_DEHB

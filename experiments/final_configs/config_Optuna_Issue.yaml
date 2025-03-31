@@ -1,0 +1,131 @@
+repeats: 10
+seed: 42
+checkpoints: [12, 20, 50]
+datasets:
+  - path: data/issue_close
+    task: issue lifetime prediction
+    target_column_index: -1
+    cross_validation: 
+      train_split: 0.75
+      test_split: 0.25
+      train: ["train_chromium","train_eclipse","train_firefox"]
+      test: ["test_chromium","test_eclipse","test_firefox"]
+      name_seperator: _
+
+models:
+  - type: DecisionTree
+    needed: 200000
+    disable: True
+    parameters:
+      model_min_samples_leaf: [1, 20]
+      model_min_samples_split: [2, 20]
+      model_criterion: ["gini", "entropy", "log_loss"]
+      model_splitter: ["best", "random"]
+      model_max_depth: [1, 10]
+      model_max_features: [0.1, 1.0]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+
+  - type: RandomForest
+    needed: 200000
+    parameters:
+      model_n_estimators: [50, 150]
+      model_criterion: ["gini", "entropy", "log_loss"]
+      model_min_samples_leaf: [1, 20]
+      model_min_samples_split: [2, 20]
+      model_max_leaf_nodes: [2, 50]
+      model_max_features: [0.1,1.00]
+      model_max_depth: [1, 10]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+
+  - type: LogisticRegression
+    needed: 200000
+    parameters:
+      model_C: [0.1, 500.00]
+      model_solver: ['lbfgs', 'liblinear', 'newton-cg', 'newton-cholesky', 'sag', 'saga']
+      model_penalty: ['l1', 'l2']
+      model_tol: [0.0, 0.1]
+      model_max_iter: [50, 200]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+    conditions:
+      - parameter: model_solver
+        rules:
+          - if: model_penalty == 'l1'
+            valid_values: ['liblinear', 'saga']
+          - if: model_penalty == 'l2'
+            valid_values: ['lbfgs', 'liblinear', 'newton-cg', 'newton-cholesky', 'sag', 'saga']
+    #verbose not used as it has no impact on HPO
+  - type: KNN
+    needed: 200000
+    parameters:
+      model_leaf_size: [10, 100]
+      model_n_neighbors: [2, 30]
+      model_weights: ['uniform', 'distance']
+      model_metric: ['minkowski', 'manhattan', 'euclidean', 'cosine']
+      model_p: [3, 30]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+
+  - type: SVM
+    needed: 200000
+    disable: True
+    parameters:
+      model_kernel: ['rbf', 'linear', 'poly', 'sigmoid']
+      model_degree: [2,10] #increased
+      model_coef0: [0.0,0.1]
+      model_gamma: [0.0, 1.0]
+      model_tol: [0.0, 0.1]
+      smote_k_neighbors: [1, 10]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+      
+  - type: MultinomialNB
+    disable: True
+    needed: 50000
+    parameters:
+      model_alpha: [0.0, 1.0]
+      smote_k_neighbors: [1, 20]
+      normalizer_norm: ["l1", "l2", "max"]
+      quantile_n_quantiles: [100, 1000]
+      quantile_output_distribution: ["uniform", "normal"]
+      quantile_subsample: [1000, 100000]
+      robust_quantile_range_a: [0,50]
+      robust_quantile_range_b: [51,100]
+      standard_enable: ["0"]
+      robust_enable: ["0"]
+
+optimizer:
+  - name: OPTUNA  # or BOHB, DEHB
+    direction: maximize
+    n_trials: 50
+
+output_folder: SMAC3_results_TPE
+
+runs_output_folder: results_OPTUNA_Final_Complete
+logging_folder: logging_OPTUNA_Final_Complete
