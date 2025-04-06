@@ -1,3 +1,4 @@
+import argparse
 import ast
 import csv
 import gc
@@ -21,10 +22,7 @@ from models.random_forest import RandomForest
 from optimizers.DEHBOptimizer import DEHBOptimizer
 from optimizers.FAREOptimizerBeta import FAREOptimizerBeta
 from optimizers.DefaultOptimizer import DefaultOptimizer
-from optimizers.FAREOptimizerEasyExp import FAREOptimizerExp
 from optimizers.BOHBOptimizer import BOHBOptimizer
-from optimizers.FAREOptimizer import FAREOptimizer
-from optimizers.FLASHOptimizer import FLASHOptimizer
 from optimizers.GridSearchOptimizer import GridSearchOptimizer
 from optimizers.HyperbandOptimizer import HyperbandOptimizer
 from optimizers.LineOptimizer import LineOptimizer
@@ -111,7 +109,6 @@ def init_optimizer(optimizer_name, optimizer_config, model_wrapper, seed=1):
         'Hyperband': HyperbandOptimizer,
         'BOHB': BOHBOptimizer,
         'LINE' : LineOptimizer,
-        'FLASH': FLASHOptimizer,
         'RANDOM': RandomSearchOptimizer,
         'DEHB': DEHBOptimizer,
     }
@@ -268,7 +265,8 @@ def pos_to_neg_ratio(datasets):
             counts = y_train.value_counts()
             ratio = counts.get(1, 0) / counts.get(0, 0) if counts.get(0, 0) > 0 else float('inf')
             print(f"ratio for {data_name} is {ratio}")
-        
+
+       
 # Main function to prepare and run optimizers
 def run_experiment(datasets, optimizers, repeats, checkpoints, tmp_output_dir, logging_dir):
     dataset_files = []
@@ -283,8 +281,17 @@ def run_experiment(datasets, optimizers, repeats, checkpoints, tmp_output_dir, l
     "wc+wc-3d-c4-obj1", "healthCloseIsses12mths0011-easy", "rs-6d-c3 obj2",
     "nasa93dem"
     ]
-    for root, _, _ in os.walk(datasets[0].get('path')):
-        dataset_files.extend(glob.glob(os.path.join(root, "*.csv")))
+    path =""
+    print(tmp_output_dir)
+    if tmp_output_dir:
+        path = datasets[0].get('path')
+    else:
+        path = datasets[0]
+    if tmp_output_dir:
+        for root, _, _ in os.walk(path):
+            dataset_files.extend(glob.glob(os.path.join(root, "*.csv")))
+    else:
+        dataset_files = [path]
     for dataset_file in dataset_files:   
         dataset_file_name = os.path.basename(dataset_file)
         data_name = os.path.splitext(dataset_file_name)[0]
@@ -293,16 +300,20 @@ def run_experiment(datasets, optimizers, repeats, checkpoints, tmp_output_dir, l
             continue
         print(f"Processing dataset file: {dataset_file}")
         X, Y = load_data(dataset_file)
+        if len(X) >= 10000:
+            continue
+        if data_name=="coc1000":
+            continue
         hyperparameter_configs = {col: list((X[col].tolist())) for col in X.columns}
         
         model_wrapper = ModelWrapperStatic(X, Y)  
         for opt_cfg in optimizers:
-            if opt_cfg.get('disable'): continue
+            #if opt_cfg.get('disable'): continue
             run_optimizer = True
             for checkpoint in checkpoints:
                 optimizer_name = opt_cfg['name']
-                results_filepath = os.path.join(tmp_output_dir, optimizer_name, datasets[0].get('task'), f"{data_name}_{checkpoint}.csv")
-                if checkFileExists(results_filepath):
+                if tmp_output_dir: results_filepath = os.path.join(tmp_output_dir, optimizer_name, datasets[0].get('task'), f"{data_name}_{checkpoint}.csv")
+                if tmp_output_dir and checkFileExists(results_filepath):
                     continue
                 if optimizer_name == 'DEHB': 
                     opt_cfg['n_trials'] = checkpoint
@@ -310,16 +321,20 @@ def run_experiment(datasets, optimizers, repeats, checkpoints, tmp_output_dir, l
                 print(f'Running {optimizer_name}')
                 
                 if optimizer:
+                    values_repeats = []
                     results = {key: [] for key in ["configs", "best_values", "runtimes"]}
                     
                     for i in range(repeats):
                         hyperconfigs = None
-                        
+                        print("here")
                         seed = i+1
-                        if optimizer_name == 'RANDOM':
-                            optimizer_log_filename = os.path.join(logging_dir,optimizer_name, datasets[0].get('task'),f"{data_name}_{1}.csv")
+                        if tmp_output_dir:
+                            if optimizer_name == 'RANDOM':
+                                optimizer_log_filename = os.path.join(logging_dir,optimizer_name, datasets[0].get('task'),f"{data_name}_{1}.csv")
+                            else:
+                                optimizer_log_filename = os.path.join(logging_dir,optimizer_name, datasets[0].get('task'),f"{data_name}_{seed}.csv")
                         else:
-                            optimizer_log_filename = os.path.join(logging_dir,optimizer_name, datasets[0].get('task'),f"{data_name}_{seed}.csv")
+                            optimizer_log_filename = os.path.join(logging_dir,optimizer_name, f"{data_name}_{seed}.csv")
                         if run_optimizer:
                             hyperconfigs = ModelConfigurationStatic(hyperparameter_configs, seed)
                             optimizer.set_seed(seed)
@@ -344,16 +359,50 @@ def run_experiment(datasets, optimizers, repeats, checkpoints, tmp_output_dir, l
                         
                         metrics = [best_config, best_value, elapsed_time]
 
-                        
+                        if not tmp_output_dir:
+                            values_repeats.append(best_value)
+                            continue
                         for key, value in zip(results.keys(), map(str, metrics)):
                             results[key].append(value)
                     content = '\n'.join([', '.join(results[key]) for key in results])
-                    write_to_file(results_filepath, content)
+                    if tmp_output_dir: write_to_file(results_filepath, content)
                     if optimizer_name == 'DEFAULT': break
+                if not tmp_output_dir:
+                    return values_repeats
                 if optimizer_name != 'FARE' and optimizer_name != 'BOHB' and optimizer_name != 'DEHB': run_optimizer = False
 
 if __name__ == "__main__":
-    config_file = os.path.join("experiments", "final_configs", "config_DEHB_static.yaml")
-    config = load_config(config_file)
-    
-    run_experiment(config['datasets'], config['optimizer'], config['repeats'], config.get('checkpoints'), config['runs_output_folder'], config['logging_folder'])
+    parser = argparse.ArgumentParser(description="Run the experiment with the specified configuration.")
+
+    # Add arguments for each of the required parameters
+    parser.add_argument('--config_file', type=str,
+                        help='Path to the configuration file (default is "config_DEHB_static.yaml")')
+    parser.add_argument('--datasets', type=str, help='Datasets to use for the experiment')
+     # Add two new arguments: output_directory and name
+    parser.add_argument('--output_directory', type=str, help='Directory for output results')
+    parser.add_argument('--name', type=str, help='Name to be included in the optimizer dictionary')
+
+    parser.add_argument('--repeats', type=int, help='Number of repeats for the experiment')
+    parser.add_argument('--budget', type=int, help='budgets', default=None)
+    parser.add_argument('--runs_output_folder', type=str, help='Output folder for the experiment runs')
+    parser.add_argument('--logging_folder', type=str, help='Logging folder for experiment logs')
+
+    # Parse the command-line arguments
+    args = parser.parse_args()
+    config = {}
+    # Load the configuration file
+    if args.config_file: config = load_config(args.config_file)
+    optimizer_config = {}
+    if args.name and args.output_directory:
+        optimizer_config['name'] = args.name
+        optimizer_config['output_directory'] = args.output_directory
+    # Run the experiment with the provided arguments or defaults
+    res = run_experiment(
+        datasets=[args.datasets] or config['datasets'],
+        optimizers=[optimizer_config] or config['optimizer'],
+        repeats=args.repeats or config['repeats'],
+        checkpoints=[args.budget] or config.get('checkpoints'),
+        tmp_output_dir=args.runs_output_folder or (config['runs_output_folder'] if config and 'runs_output_folder' in config else None),
+        logging_dir=args.logging_folder or config['logging_folder']
+    )
+    print(res)

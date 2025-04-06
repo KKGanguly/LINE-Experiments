@@ -1,10 +1,13 @@
+import argparse
 import ast
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import csv
 import gc
 import gzip
 import os
 import pickletools
 import re
+import signal
 import sys
 import time
 import yaml
@@ -14,8 +17,11 @@ from models.KNN import KNN
 from models.SVM import SVM
 from models.LogisticRegression import LogisticRegression
 from models.configurations.model_config import ModelConfiguration
+from models.configurations.model_config_static import ModelConfigurationStatic
 from models.model_wrapper import ModelWrapper
+from models.model_wrapper_static import ModelWrapperStatic
 from models.random_forest import RandomForest
+from optimizers.DEHBOptimizer import DEHBOptimizer
 from optimizers.FAREOptimizerBeta import FAREOptimizerBeta
 from optimizers.DefaultOptimizer import DefaultOptimizer
 from optimizers.BOHBOptimizer import BOHBOptimizer
@@ -26,14 +32,15 @@ from optimizers.RandomSearchOptimizer import RandomSearchOptimizer
 from optimizers.TPEOptimizer import TPEOptimizer
 from utils.LoggingUtil import LoggingUtil
 from utils.clustering_tree_faster import Cluster
-from utils.data_loader import load_data, load_data_simple, load_full_data, save_splitted_data
+from utils.data_loader_templated import load_data
 import utils.issue_close_preprocess as issue
 import utils.preprocessor as defect
 import utils.smells_preprocessor as smell
 import pickle
 import pandas as pd
+import glob
 import utils.UCI_preprocessor as UCI
-
+from tqdm import tqdm
 seed = None
 hyperparameter_configs = {}
 pickle_root = "pickles_smote_10"
@@ -52,7 +59,6 @@ def generate_file_names(dataset):
     test_files = {}
 
     path = dataset['path']
-    print(dataset)
     if 'holdout' in dataset and not dataset.get('disable'):
         # Handle holdout datasets
         for name, versions in dataset['holdout']['train'].items():
@@ -105,7 +111,8 @@ def init_optimizer(optimizer_name, optimizer_config, model_wrapper, seed=1):
         'Hyperband': HyperbandOptimizer,
         'BOHB': BOHBOptimizer,
         'LINE' : LineOptimizer,
-        'RANDOM': RandomSearchOptimizer
+        'RANDOM': RandomSearchOptimizer,
+        'DEHB': DEHBOptimizer,
     }
     if optimizer_name not in optimizer_classes:
         return None
@@ -260,108 +267,160 @@ def pos_to_neg_ratio(datasets):
             counts = y_train.value_counts()
             ratio = counts.get(1, 0) / counts.get(0, 0) if counts.get(0, 0) > 0 else float('inf')
             print(f"ratio for {data_name} is {ratio}")
-        
+
+
 # Main function to prepare and run optimizers
-def run_experiment(datasets, models, optimizers, repeats, checkpoints, tmp_output_dir, logging_dir):
-    for dataset in datasets:
-        if dataset.get('disable'): continue
-        train_files, _ = generate_file_names(dataset)
+def run_experiment(datasets, optimizers, repeats, checkpoints, tmp_output_dir, logging_dir):
+    dataset_files = []
+    accepted_datasets = [
+    "SS-X", "SS-W", "SS-N", "xomo ground", "pom3b", "SQL AllMeasurements",
+    "pom3a", "xomo osp2", "xomo osp", "SS-C", "xomo flight", "SS-F",
+    "SS-A", "SS-G", "SS-R", "SS-E", "SS-O", "SS-V", "SS-H", "pom3d",
+    "coc1000", "Wine quality", "SS-L", "SS-K", "SS-P", "auto93", "SS-J",
+    "Apache AllMeasurements", "SS-U", "SS-Q", "SS-S", "SS-I", "wc+sol-3d-c4-obj1",
+    "wc+rs-3d-c4-obj1", "HSMGP num", "SS-T", "sol-6d-c2-obj1", "wc-6d-c1-obj1",
+    "SS-D", "SS-B", "X264 AllMeasurements", "rs-6d-c3 obj1", "SS-M",
+    "wc+wc-3d-c4-obj1", "healthCloseIsses12mths0011-easy", "healthCloseIsses12mths0001-hard", "rs-6d-c3 obj2",
+    "nasa93dem"
+    ]
+    if isinstance(datasets, str) and os.path.isdir(datasets):
+        # It's a directory, collect all CSV files
+        for root, _, _ in os.walk(datasets):
+            dataset_files.extend(glob.glob(os.path.join(root, "*.csv")))
+    else:
+        if isinstance(datasets, str):
+            dataset_files = [datasets]  # single file as string
+        else:
+            dataset_files = datasets  # list of files
+    for dataset_file in dataset_files:  
+        data_name = get_file_name(dataset_file)
+        if data_name not in accepted_datasets:
+            print(f"Skipping {data_name} as it is not in the accepted datasets list.")
+            continue 
+        optimize_single_dataset(optimizers, repeats, checkpoints, tmp_output_dir, logging_dir, dataset_file)
         
-        for model_cfg in models:
-            if model_cfg.get('disable'): continue
-            model_name = model_cfg['type']
-            model = init_model(model_name)
-            
-             
-            for data_name, _ in train_files.items():
-                retreived = load(data_name)
-                if not retreived:
-                    raise ValueError("There was an error in initialization of training files!")
+# Wrapper function for parallel execution
+def run_repeat_wrapper(args):
+    (logging_dir, data_name, hyperparameter_configs, model_wrapper,
+    optimizer, checkpoint, optimizer_name, i) = args
+
+    elapsed_time, best_config, best_value = run_single_repeat(
+        logging_dir, data_name, hyperparameter_configs,
+        model_wrapper, optimizer, checkpoint, optimizer_name, i
+    )
+
+    return str(best_config), str(best_value), str(elapsed_time)
+
+def optimize_single_dataset(optimizers, repeats, checkpoints, tmp_output_dir, logging_dir, dataset_file):
+    
+    def terminate_all_processes(signum, frame):
+        print("Terminating all processes...")
+        sys.exit(0)
+        
+    data_name = get_file_name(dataset_file)
+    
+    print(f"Processing dataset file: {dataset_file}")
+    X, Y = load_data(dataset_file)
+    hyperparameter_configs = {col: list((X[col].tolist())) for col in X.columns}
+        
+    model_wrapper = ModelWrapperStatic(X, Y)
+    for optimizer in optimizers:
+        if optimizer.get('disable'): continue
+        for checkpoint in checkpoints:
+            if optimizer:
+                optimizer_name = optimizer['name']
+                if tmp_output_dir: results_filepath = os.path.join(tmp_output_dir, optimizer_name,  f"{data_name}_{checkpoint}.csv")
+                if tmp_output_dir and checkFileExists(results_filepath):
+                    continue
                 
-                if dataset.get('timed'): 
-                    X_train, y_train, heldout_train_X, heldout_train_y, X_test, y_test = retreived
-                    if heldout_train_X is not None and heldout_train_y is not None:
-                        X_train = pd.concat([X_train, heldout_train_X], axis=0)
-                        y_train = pd.concat([y_train, heldout_train_y], axis=0)
-                    model_wrapper = ModelWrapper(model, X_train, y_train, None, None, X_test, y_test,)
+                optimizer['n_trials'] = checkpoint
+                print(f'Running {optimizer_name}')
+                
+                results = {key: [] for key in ["configs", "best_values", "runtimes"]}
+                    
+                #Prepare arguments
+                args_list = [
+                    (logging_dir, data_name, hyperparameter_configs, model_wrapper,
+                    optimizer, checkpoint, optimizer_name, i)
+                    for i in range(repeats)
+                ]
+                # Register the signal handler for Ctrl+C
+                signal.signal(signal.SIGINT, terminate_all_processes)
+                with ProcessPoolExecutor() as executor:
+                    # Submit all tasks
+                    futures = [executor.submit(run_repeat_wrapper, args) for args in args_list]
+                    try:
+                        # Progress bar for completed tasks
+                        for future in tqdm(as_completed(futures), total=len(futures), desc=f"{optimizer_name} {checkpoint}"):
+                            best_config, best_value, elapsed_time = future.result()
+                            metrics = [best_config, best_value, elapsed_time]
 
-                else:    
-                    X_train, y_train = retreived
-                    model_wrapper = ModelWrapper(model, X_train, y_train, None, None)
+                            for key, value in zip(results.keys(), map(str, metrics)):
+                                results[key].append(value)
+                    except KeyboardInterrupt:
+                        print("\nProcess interrupted, cleaning up...")
+                        executor.shutdown(wait=False)
+                        sys.exit(0)
+                content = '\n'.join([', '.join(results[key]) for key in results])
+                if tmp_output_dir: write_to_file(results_filepath, content)
+                if optimizer_name == 'DEFAULT': break
 
-                for opt_cfg in optimizers:
-                    if opt_cfg.get('disable'): continue
-                    run_optimizer = True
-                    for checkpoint in checkpoints:
-                        optimizer_name = opt_cfg['name']
-                        results_filepath = os.path.join(tmp_output_dir, optimizer_name, model_cfg['type'],dataset.get('task'), f"{data_name}_{checkpoint}.csv")
-                        if checkFileExists(results_filepath):
-                            continue
-                        if optimizer_name == 'FARE' or optimizer_name == 'BOHB': 
-                            opt_cfg['n_trials'] = checkpoint
-                        optimizer = init_optimizer(optimizer_name, opt_cfg, model_wrapper)
-                        print(f'Running {optimizer_name}')
-                        
-                        if optimizer:
-                            results = {key: [] for key in ["configs", "best_values", "runtimes", "recalls", "false_alarm_revs", "auc", "best_scores"]}
-                            
-                            for i in range(repeats):
-                                hyperconfigs = None
-                                clusters = None
-                                seed = i+1
-                                if optimizer_name == 'RANDOM':
-                                    optimizer_log_filename = os.path.join(logging_dir,optimizer_name, model_name, dataset.get('task'),f"{data_name}_{1}.csv")
-                                else:
-                                    optimizer_log_filename = os.path.join(logging_dir,optimizer_name, model_name, dataset.get('task'),f"{data_name}_{seed}.csv")
-                                if run_optimizer:
-                                    hyperconfigs = load(hyperparameter_configs_key+model_name+str(seed))
-                                    if not hyperconfigs:
-                                        raise ValueError(f"Could not load hyperparameter configs for model {model_name}")
-                                    optimizer.set_seed(seed)
-                                    model.set_seed(seed)
-                                    model.reset_model()
-                                    optimizer.set_model_config(hyperconfigs)
-                                    optimizer.set_logging_util(LoggingUtil(optimizer_log_filename))
-                                    if optimizer_name == 'FARE': 
-                                        clusters = load(clusters_key+model_name+str(seed))
-                                        if not clusters:
-                                            raise ValueError(f"Could not load config clusters for model {model_name}")
-                                        optimizer.set_cluster(clusters)
-                                    
-                                    start_time = time.time()
-                                    optimizer.optimize()
-                                    elapsed_time = time.time() - start_time
-                                if optimizer_name == 'FARE' or optimizer_name == 'BOHB' or optimizer_name == 'DEFAULT':
-                                    best_config, best_value = optimizer.best_config, (1-optimizer.best_value)
-                                else:
-                                    if optimizer_name == 'RANDOM':
-                                        #best_config, best_value, elapsed_time = get_avg_configs_up_to_checkpoint(optimizer_log_filename, checkpoint)
-                                        best_config, best_value, elapsed_time = get_best_configs_up_to_checkpoint(optimizer_log_filename, checkpoint)  
-                                    else: 
-                                        best_config, best_value, elapsed_time = get_best_configs_up_to_checkpoint(optimizer_log_filename, checkpoint)                                        
-                                print(f'Best config for {optimizer_name} on {model_cfg["type"]} for {data_name}: {best_config}, completed in {elapsed_time:.2f}s')
-                                
-                                # Evaluate and collect results
-                                if optimizer_name == 'RANDOM':
-                                    recall, false_alarm_rev, auc, comp_score = None, None, None, best_value
-                                    metrics = [best_config, best_value, elapsed_time, recall, false_alarm_rev, auc, comp_score]
+def run_single_repeat(logging_dir, data_name, hyperparameter_configs, model_wrapper, optimizer, checkpoint, optimizer_name, i):
+    seed = i+1
+    optimizer_log_filename = os.path.join(logging_dir,optimizer_name, f"{data_name}_{seed}.csv")
+    hyperconfigs = ModelConfigurationStatic(hyperparameter_configs, seed)
+    optimizer = init_optimizer(optimizer_name, optimizer, model_wrapper)
+    optimizer.set_seed(seed)
+    optimizer.set_model_config(hyperconfigs)
+    optimizer.set_logging_util(LoggingUtil(optimizer_log_filename))
+    start_time = time.time()
+    optimizer.optimize()
+    elapsed_time = time.time() - start_time
+    if optimizer_name == "DEHB":
+        best_config, best_value, elapsed_time = optimizer.best_config, optimizer.best_value, elapsed_time
+    elif optimizer_name == 'FARE' or optimizer_name == 'BOHB' or optimizer_name == 'DEFAULT':
+        best_config, best_value, elapsed_time = optimizer.best_config, (1-optimizer.best_value), elapsed_time
+    else:
+        best_config, best_value, elapsed_time = get_best_configs_up_to_checkpoint(optimizer_log_filename, checkpoint)                                        
+    print(f'Best config for {optimizer_name} for {data_name}: {best_config}, completed in {elapsed_time:.2f}s')
+    return elapsed_time,best_config,best_value
 
-                                else:
-                                    (recall, false_alarm_rev, auc), comp_score = model_wrapper.test(best_config)
-                                    metrics = [best_config, best_value, elapsed_time, recall, 1-false_alarm_rev, auc, comp_score]
-                                
-                                for key, value in zip(results.keys(), map(str, metrics)):
-                                    results[key].append(value)
-                                    
-                            
-                            content = '\n'.join([', '.join(results[key]) for key in results])
-                            write_to_file(results_filepath, content)
-                            if optimizer_name == 'DEFAULT': break
-                        if optimizer_name != 'FARE': run_optimizer = False
+def get_file_name(dataset_file):
+    dataset_file_name = os.path.basename(dataset_file)
+    data_name = os.path.splitext(dataset_file_name)[0]
+    return data_name
 
 if __name__ == "__main__":
-    config_file = os.path.join("experiments", "final_configs", "config_LINE_Defect.yaml")
-    config = load_config(config_file)
-    
-    init_experiment(config['datasets'], config['models'], config['repeats'])
-    run_experiment(config['datasets'], config['models'], config['optimizer'], config['repeats'], config.get('checkpoints'), config['runs_output_folder'], config['logging_folder'])
+    parser = argparse.ArgumentParser(description="Run the experiment with the specified configuration.")
+
+    # Add arguments for each of the required parameters
+    parser.add_argument('--config_file', type=str,
+                        help='Path to the configuration file (default is "config_DEHB_static.yaml")')
+    parser.add_argument('--datasets', type=str, help='Datasets to use for the experiment')
+     # Add two new arguments: output_directory and name
+    parser.add_argument('--output_directory', type=str, help='Directory for output results')
+    parser.add_argument('--name', type=str, help='Name to be included in the optimizer dictionary')
+
+    parser.add_argument('--repeats', type=int, help='Number of repeats for the experiment')
+    parser.add_argument('--budget', type=int, nargs='+', help='budgets', default=None)
+    parser.add_argument('--runs_output_folder', type=str, help='Output folder for the experiment runs')
+    parser.add_argument('--logging_folder', type=str, help='Logging folder for experiment logs')
+
+    # Parse the command-line arguments
+    args = parser.parse_args()
+    config = {}
+    # Load the configuration file
+    if args.config_file: config = load_config(args.config_file)
+    optimizer_config = {}
+    if args.name and args.output_directory:
+        optimizer_config['name'] = args.name
+        optimizer_config['output_directory'] = args.output_directory
+    # Run the experiment with the provided arguments or defaults
+    run_experiment(
+        datasets=args.datasets or config['datasets'],
+        optimizers=[optimizer_config] or config['optimizer'],
+        repeats=args.repeats or config['repeats'],
+        checkpoints=args.budget or config.get('checkpoints'),
+        tmp_output_dir=args.runs_output_folder or (config['runs_output_folder'] if config and 'runs_output_folder' in config else None),
+        logging_dir=args.logging_folder or config['logging_folder']
+    )

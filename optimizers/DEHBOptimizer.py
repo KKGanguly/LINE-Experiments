@@ -13,6 +13,7 @@ from ConfigSpace.configuration import Configuration
 import ConfigSpace as CS
 import random
 from dehb import DEHB
+import uuid
 class CustomConfigurationSpace(ConfigurationSpace):
     def __init__(self, predefined_configs, mapping = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -64,12 +65,11 @@ class DEHBOptimizer(BaseOptimizer):
         
         n_trials =  self.config['n_trials']
         start_time = time.time()
-        output_directory = self.config['output_directory']
+        output_directory = f"{self.config['output_directory']}/{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         random.seed(self.seed)
         #hyperparameter_dict = self.model_config.get_hyperparam_dict()
         self.config_space = self.create_configspace() 
-        if os.path.exists(output_directory):
-            shutil.rmtree(output_directory)
+    
         dehb = DEHB(
             f=objective, 
             cs=self.config_space, 

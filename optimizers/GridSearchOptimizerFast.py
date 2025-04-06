@@ -4,7 +4,6 @@ from sklearn.pipeline import Pipeline
 from optimizers.base_optimizer import BaseOptimizer
 from imblearn.pipeline import Pipeline
 from imblearn.over_sampling import SMOTE
-from Nue_main.src.optimization.FlashCV import FlashCV
 from sklearn.metrics import make_scorer, roc_auc_score
 import joblib
 import numpy as np
