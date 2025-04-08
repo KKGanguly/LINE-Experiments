@@ -167,3 +167,5 @@ results_*/
 *.log
 log*/
 log*
+*.out
+*_run/

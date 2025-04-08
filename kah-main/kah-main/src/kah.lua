@@ -329,18 +329,13 @@ function Data:neighbors(row1,rows,  f)--> a (rows, sorted by distance to row1)
 -- random initialization
 function Data:anys(budget)--> rows
   return many(rows or self.rows,budget) end
-
 function Data:dehb(file, budget, rp)
   -- Define the Python command to execute
-  local filepath = file or the.data
-  local budget = budget
-  local command = 'python3.13 ../../../experiments/experiement_runner.py ' ..
-                '--datasets ' .. filepath .. ' ' ..
-                '--output_directory ../../../dehb_run ' ..
-                '--name DEHB ' ..
-                '--budget ' .. budget .. ' ' ..
-                '--repeats ' .. rp .. ' ' .. 
-                '--logging_folder ../../../log_dehb.csv'
+  local filepath = file or self.data
+  local command = 'python3.13 ../../../experiments/FileResultsReader.py ' ..
+                '--data_file_path ' .. filepath .. ' ' ..
+                '--folder_name ../../../results_DEHB_parallel/DEHB ' ..
+                '--budget ' .. budget
 
   -- Run the command using io.popen and capture the output
   local handle = io.popen(command)
@@ -353,18 +348,34 @@ function Data:dehb(file, budget, rp)
       table.insert(lines, line)
   end
   local last_line = lines[#lines]  -- Get the last line
-  --local last_line = tonumber(lines[#lines])  -- Convert the last line to a number
+
+  -- Parse the last line by commas
   local values = {}
   for value in last_line:gmatch("([^,]+)") do
       table.insert(values, value)
   end
+
+  -- Clean up the first and last value if necessary
   if #values > 0 then
     values[1] = values[1]:gsub("^%[", ""):gsub("%s+$", "")  -- Remove leading [ and trailing space
     values[#values] = values[#values]:gsub("%]$", ""):gsub("%s+$", "")  -- Remove trailing ] and space
   end
-  return values 
-end
 
+  -- Trim spaces and convert the values to numbers
+  for i, v in ipairs(values) do
+    -- Remove extra spaces and quotes before conversion
+    v = v:gsub("^%s*(.-)%s*$", "%1")  -- Trim leading and trailing spaces
+    v = v:gsub("^'?(.-)'?$", "%1")  -- Remove single quotes if present
+    values[i] = tonumber(v) or v  -- Convert to number, or leave as string if not a number
+  end
+
+  -- Convert the values to numbers if possible
+  for i, v in ipairs(values) do
+    values[i] = tonumber(v) or v  -- Convert to number, or keep as string if not possible
+  end
+
+  return values
+end
 
 -- kmeans++ initialization. Find  centroids are distance^2 from existing ones.
 function Data:around(budget,  rows,      z)--> rows
@@ -615,7 +626,6 @@ go["--around"] = function(file,     data,Y)
   data= Data:new(csv(file or the.data))
   Y = function(row) return data:ydist(row) end
   budget = the.Budget
-  
   for _=1,20 do
     shuffle(data.rows)
     print(Y(sort(data:around(budget),two(Y))[1])) end end

@@ -294,9 +294,9 @@ def run_experiment(datasets, optimizers, repeats, checkpoints, tmp_output_dir, l
             dataset_files = datasets  # list of files
     for dataset_file in dataset_files:  
         data_name = get_file_name(dataset_file)
-        if data_name not in accepted_datasets:
-            print(f"Skipping {data_name} as it is not in the accepted datasets list.")
-            continue 
+        #if data_name not in accepted_datasets:
+        #    print(f"Skipping {data_name} as it is not in the accepted datasets list.")
+        #    continue 
         optimize_single_dataset(optimizers, repeats, checkpoints, tmp_output_dir, logging_dir, dataset_file)
         
 # Wrapper function for parallel execution
