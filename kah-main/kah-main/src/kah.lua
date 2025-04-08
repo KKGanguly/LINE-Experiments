@@ -334,7 +334,7 @@ function Data:dehb(file, budget, rp)
   local filepath = file or self.data
   local command = 'python3.13 ../../../experiments/FileResultsReader.py ' ..
                 '--data_file_path ' .. filepath .. ' ' ..
-                '--folder_name ../../../results_DEHB_parallel/DEHB ' ..
+                '--folder_name ../../../DEHB_parallel/DEHB ' ..
                 '--budget ' .. budget
 
   -- Run the command using io.popen and capture the output

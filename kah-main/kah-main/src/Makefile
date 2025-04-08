@@ -66,7 +66,7 @@ word: ## commit to main
 heading:
 	- echo -en "$(LOUD)Heading? $(SOFT)" ;  read x ; figlet -W -f mini $$x | gawk '{print "#  " $$0}'
 
-comparez: ../../../data/moot/optimize/[chmp]*/*.csv
+comparez: ../../../data/moot_runs/optimize/[chmp]*/*.csv
 	$(foreach f, $^, (lua kah.lua --comparez $f >> $@.out& ); )
 
 branch: ../../../data/moot/optimize/[chmp]*/*.csv
