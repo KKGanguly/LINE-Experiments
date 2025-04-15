@@ -329,6 +329,7 @@ function Data:neighbors(row1,rows,  f)--> a (rows, sorted by distance to row1)
 -- random initialization
 function Data:anys(budget)--> rows
   return many(rows or self.rows,budget) end
+
 function Data:dehb(file, budget, rp)
   -- Define the Python command to execute
   local filepath = file or self.data
@@ -341,40 +342,24 @@ function Data:dehb(file, budget, rp)
   local handle = io.popen(command)
   local result = handle:read("*a")  -- Read the entire output
   handle:close()
+  
+    -- Step 1: Extract the two lists using pattern matching
+  local list1_str, list2_str = result:match("%((%b[])%s*,%s*(%b[])%)")
 
-  -- Split the output by newline and return the last line
-  local lines = {}
-  for line in result:gmatch("[^\r\n]+") do
-      table.insert(lines, line)
+  -- Helper function to process each list string
+  local function parse_list(list_str)
+      local numbers = {}
+      for value in list_str:gmatch("'(.-)'") do
+          local num = tonumber(value:match("^%s*(.-)%s*$"))  -- trim spaces and convert to number
+          table.insert(numbers, num)
+      end
+      return numbers
   end
-  local last_line = lines[#lines]  -- Get the last line
+  -- Step 2: Parse both lists
+  local scores = parse_list(list1_str)
+  local times = parse_list(list2_str)
 
-  -- Parse the last line by commas
-  local values = {}
-  for value in last_line:gmatch("([^,]+)") do
-      table.insert(values, value)
-  end
-
-  -- Clean up the first and last value if necessary
-  if #values > 0 then
-    values[1] = values[1]:gsub("^%[", ""):gsub("%s+$", "")  -- Remove leading [ and trailing space
-    values[#values] = values[#values]:gsub("%]$", ""):gsub("%s+$", "")  -- Remove trailing ] and space
-  end
-
-  -- Trim spaces and convert the values to numbers
-  for i, v in ipairs(values) do
-    -- Remove extra spaces and quotes before conversion
-    v = v:gsub("^%s*(.-)%s*$", "%1")  -- Trim leading and trailing spaces
-    v = v:gsub("^'?(.-)'?$", "%1")  -- Remove single quotes if present
-    values[i] = tonumber(v) or v  -- Convert to number, or leave as string if not a number
-  end
-
-  -- Convert the values to numbers if possible
-  for i, v in ipairs(values) do
-    values[i] = tonumber(v) or v  -- Convert to number, or keep as string if not possible
-  end
-
-  return values
+  return scores, times
 end
 
 -- kmeans++ initialization. Find  centroids are distance^2 from existing ones.
@@ -683,6 +668,20 @@ go["--branch"] = function(file,    data,Y,b4,S)
 local _comaprez
 go["--comparez"] = function(file) _comparez(file,"mu") end
 
+function printTable(tbl, indent)
+  indent = indent or ""  -- Set default indentation to empty string
+  for key, value in pairs(tbl) do
+      if type(value) == "table" then
+          -- If the value is a table, print its key and recurse
+          print(indent .. key .. ":")
+          printTable(value, indent .. "  ")
+      else
+          -- Otherwise, print the key-value pair
+          print(indent .. key .. ": " .. tostring(value))
+      end
+  end
+end
+
 function _comparez(file,IT)  
   file = file or the.data
   local Budget = 25
@@ -724,26 +723,38 @@ function _comparez(file,IT)
   for _,task in pairs(TASKS) do
       io.stderr:write("<"..task[1])
       push(rxs, push(task, Sample:new(task[1])))
+      push(task, Sample:new(task[1].."_time"))
       for _=1,Repeats do
         if string.match(task[1], "^DEHB") then
           -- Add the best value or perform any custom operation for "dumb"
           --task[3]:add(task[2]()[1])
-          values = task[2]()
-          for _, val in ipairs(values) do
+          scores, times = task[2]()
+          for _, val in ipairs(scores) do
             task[3]:add(tonumber(val)) 
+          end
+          
+          for _, val in ipairs(times) do
+            print("times")
+            task[4]:add(tonumber(val))
           end
           break
         else
           shuffle(data.rows)
-          task[3]:add(BEST(task[2]())) end
+          local start_time = os.clock() -- Start timing
+          task[3]:add(BEST(task[2]()))
+          local end_time = os.clock() -- End timing
+          task[4]:add(end_time - start_time) -- Accumulate time
         end
+      end
       io.stderr:write(">")
-  end  
+  end 
   print(" ")
   push(rxs,B4)
   push(TASKS, {"Before",true,B4})
   local sorted=Sample.merges(sort(rxs,lt"mu"),B4.sd * Epsilon)
-  local names = map(TASKS,function(task) return task[1] end)
+  local names = map(TASKS, function(task) 
+    return task[1] .. "," .. task[1] .. "_time"
+  end)
   print("D,#R,#X,#Y,B4.".. IT ..",B4.lo,B4.sd,2B."..IT,table.concat(names,","),",File")
   local report = {N((B4.mu - sorted[1]._meta.mu) /(B4.mu - B4.lo)),
            #data.rows,
@@ -754,7 +765,11 @@ function _comparez(file,IT)
            fmt("%.0f",100*B4.sd),
            fmt("%.0f",100*sorted[1]._meta[IT])}
   for _,task in pairs(TASKS) do
-     push(report, fmt("%.0f %s",100*task[3][IT], task[3]._meta.rank)) end 
+     push(report, fmt("%.0f %s",100*task[3][IT], task[3]._meta.rank))
+     if task[1]~="Before" then 
+      push(report, fmt("%.2f",1000*task[4][IT]))
+     end 
+    end 
   push(report, file:gsub("^.*/",""))
   print(table.concat(report,", ")) end 
 

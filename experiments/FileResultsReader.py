@@ -14,10 +14,10 @@ def read_second_row(folder_name, data_file_path, budget):
         with open(file_path, mode='r', newline='', encoding='utf-8') as file:
             csv_reader = csv.reader(file)
             rows = list(csv_reader)
-            if len(rows) < 2:
-                print("Error: The file does not contain a second row.")
+            if len(rows) < 3:
+                print("Error: The file is misformatted")
                 return None
-            return rows[1]
+            return rows[1], rows[2]
     except Exception as e:
         print(f"Error reading the file: {e}")
         return None
@@ -27,7 +27,6 @@ if __name__ == "__main__":
     parser.add_argument("--folder_name", required=True, help="The folder containing the CSV file.")
     parser.add_argument("--data_file_path", required=True, help="The full path of the data file.")
     parser.add_argument("--budget", required=True, help="The budget (suffix of the file).")
-    
     args = parser.parse_args()
     
     second_row = read_second_row(args.folder_name, args.data_file_path, args.budget)
