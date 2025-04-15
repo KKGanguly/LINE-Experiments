@@ -734,7 +734,6 @@ function _comparez(file,IT)
           end
           
           for _, val in ipairs(times) do
-            print("times")
             task[4]:add(tonumber(val))
           end
           break
